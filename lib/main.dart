@@ -1,21 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:path/path.dart';
+import 'package:learn_sqflite/service/database.dart';
 import 'package:sqflite/sqflite.dart';
+
 import 'models/dog.dart';
 
 late final Future<Database> database;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  database = openDatabase(
-    join(await getDatabasesPath(), 'doggie_database.db'), // path
-    onCreate: (db, version) {
-      return db.execute(
-        'CREATE TABLE dogs(id INTEGER PRIMARY KEY, name TEXT, age INTEGER)',
-      );
-    },
-    version: 1,
-  );
+  await SqlDatabase.init();
   runApp(const LearnSqfLite());
 }
 
@@ -41,109 +34,120 @@ class Home extends StatefulWidget {
 }
 
 class _HomeState extends State<Home> {
+  List<Dog> items = [];
 
-  int count = 0;
-
-  void addTableDog() async {
-    var fido = Dog(
-      id: count++,
-      name: 'Fido',
-      age: 35,
-    );
-
-    await insertDog(fido);
+  @override
+  void initState() {
+    super.initState();
+    getAllData();
   }
 
-  // A method that retrieves all the dogs from the dogs table.
-  Future<List<Dog>> dogs() async {
-    // Get a reference to the database.
-    final db = await database;
-
-    // Query the table for all The Dogs.
-    final List<Map<String, dynamic>> maps = await db.query('dogs');
-
-    // Convert the List<Map<String, dynamic> into a List<Dog>.
-    return List.generate(maps.length, (i) {
-      return Dog(
-        id: maps[i]['id'],
-        name: maps[i]['name'],
-        age: maps[i]['age'],
-      );
-    });
+  void getAllData() async {
+    items = await SqlDatabase.readAll();
+    setState(() {});
   }
 
-  void readDogTable() async {
-    List<Dog> list = await dogs();
-    print(list);
+  void deleteData(int id) async {
+    SqlDatabase.delete(id).then((_) => getAllData());
   }
 
-  Future<void> updateDog(Dog dog) async {
-    // Get a reference to the database.
-    final db = await database;
-
-    // Update the given Dog.
-    await db.update(
-      'dogs',
-      dog.toMap(),
-      // Ensure that the Dog has a matching id.
-      where: 'id = ?',
-      // Pass the Dog's id as a whereArg to prevent SQL injection.
-      whereArgs: [dog.id],
-    );
-  }
-
-  void updateDatabase() async{
-    var fido = const Dog(
-      id: 0,
-      name: 'Fido',
-      age: 42,
-    );
-
-    await updateDog(fido);
-
-// Print the updated results.
-    print(await dogs()); // Prints Fido with age 42.
+  void goDetail({Dog? dog}) async {
+    final data = await Navigator.push(context, MaterialPageRoute(builder: (_) => DetailPage(dog: dog)));
+    if(data != null) getAllData();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Center(
+      appBar: AppBar(title: const Text("Dogs")),
+      body: ListView.builder(
+        padding: const EdgeInsets.all(20),
+        itemCount: items.length,
+        itemBuilder: (context, index) {
+          final dog = items[index];
+          return Card(
+            child: ListTile(
+              title: Text(dog.name),
+              subtitle: Text(dog.age.toString()),
+              style: Theme.of(context).listTileTheme.style,
+              leading: CircleAvatar(backgroundColor: Colors.primaries[index % Colors.primaries.length],child: Text(dog.id.toString(),),),
+              trailing: IconButton(onPressed: () => deleteData(dog.id), icon: const Icon(Icons.delete)),
+              onLongPress: () => goDetail(dog: dog),
+            ),
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        child: const Icon(Icons.add),
+        onPressed: () => goDetail(),
+      ),
+    );
+  }
+}
+
+class DetailPage extends StatefulWidget {
+  final Dog? dog;
+  const DetailPage({Key? key, this.dog}) : super(key: key);
+
+  @override
+  State<DetailPage> createState() => _DetailPageState();
+}
+
+
+class _DetailPageState extends State<DetailPage> {
+  TextEditingController nameController = TextEditingController();
+  TextEditingController ageController = TextEditingController();
+  int count = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    getOldDog();
+  }
+
+  void getOldDog() async {
+    if(widget.dog != null) {
+      nameController.text = widget.dog!.name;
+      ageController.text = widget.dog!.age.toString();
+    }
+    final db = await SqlDatabase.database;
+    count = Sqflite.firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM dogs')) ?? 0;
+    setState(() {});
+  }
+
+  void pressSave() async {
+    int id = (widget.dog != null) ? widget.dog!.id : count++;
+    SqlDatabase.insert(Dog(id: id, name: nameController.text, age: int.tryParse(ageController.text) ?? 0)).then((_) {
+      Navigator.pop(context, "Done");
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Detail Page"),),
+      body: Padding(
+        padding: const EdgeInsets.all(20),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            ElevatedButton(
-              onPressed: addTableDog,
-              style: Theme.of(context).elevatedButtonTheme.style,
-              child: const Text("Add a dog"),
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(hintText: "Dog name"),
             ),
-
-            const SizedBox(height: 10),
-            ElevatedButton(
-              onPressed: readDogTable,
-              style: Theme.of(context).elevatedButtonTheme.style,
-              child: const Text("read all dogs"),
+            const SizedBox(height: 20),
+            TextField(
+              controller: ageController,
+              decoration: const InputDecoration(hintText: "Dog age"),
             ),
-
-            const SizedBox(height: 10),
+            const SizedBox(height: 20),
             ElevatedButton(
-              onPressed: updateDatabase,
+              onPressed: pressSave,
               style: Theme.of(context).elevatedButtonTheme.style,
-              child: const Text("update the dog"),
+              child: const Text("Save"),
             ),
           ],
         ),
       ),
     );
   }
-}
-
-Future<void> insertDog(Dog dog) async {
-  final db = await database;
-
-  await db.insert(
-    'dogs',
-    dog.toMap(),
-    conflictAlgorithm: ConflictAlgorithm.replace,
-  );
 }
